@@ -233,7 +233,7 @@ def get_inbound_deliveries(request):
 			data=paginator.get_paginated_response(serializer.data).data
 		)
 	except Exception as e:
-		logger.error(f"Error fetching inbound deliveries: {e}")
+		logger.exception(f"Error fetching inbound deliveries: {e}")
 		return APIResponse(
 			status=status.HTTP_500_INTERNAL_SERVER_ERROR,
 			message='Internal server error while fetching inbound deliveries'
@@ -313,8 +313,17 @@ def get_inbound_delivery(request, pk):
 			),
 			data=InboundDeliverySerializer(delivery).data
 		)
+	except ValidationError as e:
+		# The sales order exists in ByD but cannot be mapped to an eGRN delivery
+		# (e.g. its recipient party is not a known store).
+		reason = '; '.join(e.messages)
+		logger.warning(f"Sales order {pk} cannot be received: {reason}")
+		return APIResponse(
+			status=status.HTTP_404_NOT_FOUND,
+			message=f"Sales order {pk} cannot be received in eGRN: {reason}"
+		)
 	except Exception as e:
-		logger.error(f"Error fetching sales order {pk}: {e}")
+		logger.exception(f"Error fetching sales order {pk}: {e}")
 		return APIResponse(
 			status=status.HTTP_500_INTERNAL_SERVER_ERROR,
 			message=f"Error fetching sales order {pk}: {e}"

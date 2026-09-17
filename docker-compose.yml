@@ -54,6 +54,8 @@ services:
       - DB_HOST=db
       - DB_PORT=3306
       - REDIS_URL=redis://redis:6379/0
+      - BYD_AUTO_POST_GOODS_ISSUE=${BYD_AUTO_POST_GOODS_ISSUE:-false}
+      - BYD_SHORT_RECEIPT_POLICY=${BYD_SHORT_RECEIPT_POLICY:-hold}
       - ALLOWED_HOSTS=${ALLOWED_HOSTS:-localhost,127.0.0.1}
       - FORCE_SCRIPT_NAME=/API
       - USE_X_FORWARDED_HOST=true
@@ -87,6 +89,8 @@ services:
       - DB_HOST=db
       - DB_PORT=3306
       - REDIS_URL=redis://redis:6379/0
+      - BYD_AUTO_POST_GOODS_ISSUE=${BYD_AUTO_POST_GOODS_ISSUE:-false}
+      - BYD_SHORT_RECEIPT_POLICY=${BYD_SHORT_RECEIPT_POLICY:-hold}
       # - FORCE_SCRIPT_NAME=/API
       - USE_X_FORWARDED_HOST=true
     volumes:

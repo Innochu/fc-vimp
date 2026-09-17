@@ -350,18 +350,21 @@ class InboundDelivery(models.Model):
 			raise ValidationError(
 				f"Destination store PartyID missing from sales order {delivery.sales_order_reference}"
 			)
-		delivery.destination_store = None
+		# Reading an unset non-nullable FK raises RelatedObjectDoesNotExist, so
+		# track the match locally rather than probing delivery.destination_store.
+		destination_store = None
 		for code in candidate_codes:
 			try:
-				delivery.destination_store = cls._find_store_by_identifier(code)
+				destination_store = cls._find_store_by_identifier(code)
 				break
 			except Store.DoesNotExist:
 				continue
-		if delivery.destination_store is None:
+		if destination_store is None:
 			raise ValidationError(
 				f"Destination store not found for sales order "
 				f"{delivery.sales_order_reference}: tried {', '.join(candidate_codes)}"
 			)
+		delivery.destination_store = destination_store
 
 		delivery.metadata = sales_order_data
 
