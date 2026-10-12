@@ -3,10 +3,12 @@ import os, sys
 import logging
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
+from io import BytesIO
 from uuid import uuid4
 
 from django.conf import settings
 from django.forms import model_to_dict
+from django.http import HttpResponse
 from django.utils import timezone
 from rest_framework import status
 from rest_framework.decorators import api_view, authentication_classes
@@ -33,6 +35,8 @@ from .models import (
 )
 from .serializers import GoodsReceivedNoteSerializer, GoodsReceivedLineItemSerializer, PurchaseOrderSerializer
 
+
+logger = logging.getLogger(__name__)
 
 # Initialize REST services
 byd_rest_services = RESTServices()
@@ -434,16 +438,15 @@ def _collect_grn_line_items(grn_ids: list):
 	return line_items_map, delivered_quantity_map
 
 
-def _write_grn_export_file(request, queryset, line_items_map, delivered_quantity_map):
-	download_dir = _ensure_grn_download_dir()
-	user_identifier = getattr(request.user, 'id', None) or 'anonymous'
-	filename = f"grns_{user_identifier}_{timezone.now().strftime('%Y%m%d%H%M%S')}_{uuid4().hex[:8]}.xlsx"
-	file_path = os.path.join(download_dir, filename)
-	
+def _write_grn_workbook(queryset, line_items_map, delivered_quantity_map, target):
+	'''
+		Write the GRN export workbook to `target` (a file path or a binary file-like object).
+		Returns the number of data rows written.
+	'''
 	workbook = Workbook(write_only=True)
 	worksheet = workbook.create_sheet(title="GRNs")
 	worksheet.append(GRN_EXPORT_HEADERS)
-	
+
 	row_count = 0
 	for grn in queryset.iterator(chunk_size=500):
 		grn_rows = line_items_map.get(grn.id, [])
@@ -456,9 +459,19 @@ def _write_grn_export_file(request, queryset, line_items_map, delivered_quantity
 				)
 			)
 			row_count += 1
-	
-	workbook.save(file_path)
+
+	workbook.save(target)
 	workbook.close()
+	return row_count
+
+
+def _write_grn_export_file(request, queryset, line_items_map, delivered_quantity_map):
+	download_dir = _ensure_grn_download_dir()
+	user_identifier = getattr(request.user, 'id', None) or 'anonymous'
+	filename = f"grns_{user_identifier}_{timezone.now().strftime('%Y%m%d%H%M%S')}_{uuid4().hex[:8]}.xlsx"
+	file_path = os.path.join(download_dir, filename)
+
+	row_count = _write_grn_workbook(queryset, line_items_map, delivered_quantity_map, file_path)
 	return file_path, row_count
 
 
@@ -612,6 +625,43 @@ def get_vendors_grns(request, ):
 		return APIResponse(f"No GRN found.", status=status.HTTP_404_NOT_FOUND)
 	except Exception as e:
 		return APIResponse(f"Internal Error: {e}", status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(['GET'])
+@authentication_classes([CombinedAuthentication])
+def download_vendor_grns(request):
+	'''
+		Download the authenticated vendor's GRNs as an Excel file.
+		Accepts the same filters as download-grns (po_id, start_date, end_date, ...),
+		but is always limited to the requesting vendor's own GRNs. The file is streamed
+		in the response rather than written to the public media folder.
+	'''
+	try:
+		vendor_profile = getattr(request.user, 'vendor_profile', None)
+		if vendor_profile is None:
+			return APIResponse("Only vendors can download GRNs.", status=status.HTTP_403_FORBIDDEN)
+
+		grns = _build_filtered_grns_queryset(request).filter(purchase_order__vendor=vendor_profile)
+		if not grns.exists():
+			return APIResponse("No GRNs found for the specified criteria.", status=status.HTTP_404_NOT_FOUND)
+
+		grn_ids = list(grns.values_list('id', flat=True))
+		line_items_map, delivered_quantity_map = _collect_grn_line_items(grn_ids)
+
+		buffer = BytesIO()
+		_write_grn_workbook(grns, line_items_map, delivered_quantity_map, buffer)
+		buffer.seek(0)
+
+		filename = f"grns_{vendor_profile.byd_internal_id}_{timezone.now().strftime('%Y%m%d%H%M%S')}.xlsx"
+		response = HttpResponse(
+			buffer.getvalue(),
+			content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+		)
+		response['Content-Disposition'] = f'attachment; filename="{filename}"'
+		return response
+	except Exception as e:
+		logger.exception(f"Error generating vendor GRN download: {e}")
+		return APIResponse("Internal Error while generating the GRN download.", status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 @api_view(['GET'])

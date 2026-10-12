@@ -3,7 +3,7 @@ from .views import *
 from invoice_service.views import *
 from approval_service.views import *
 from core_service.views import login_user, verify_otp, PasswordResetRequestView, PasswordResetView, PasswordChangeView
-from egrn_service.views import get_vendors_grns
+from egrn_service.views import get_vendors_grns, download_vendor_grns
 
 urlpatterns = [
 	# Auth endpoints
@@ -20,6 +20,7 @@ urlpatterns = [
 	path('vendor/purchaseorders/<int:po_id>', get_vendors_orders, name="get_purchase_order"),
 	#GRN endpoints
 	path('vendor/grns', get_vendors_grns, name="get_vendors_grns"),
+	path('vendor/grns/download', download_vendor_grns, name="download_vendor_grns"),
 	# Invoice endpoints
 	path('vendor/invoices', VendorInvoiceView.as_view(), name='vendor_invoice'),
 	# Misc endpoints
