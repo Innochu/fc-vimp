@@ -723,7 +723,9 @@ class RESTServices:
 			the delivery is released in the same call; without it the delivery is left
 			"Not Released" for release_outbound_delivery().
 
-			The action takes no quantity: ByD ships the item's full open quantity.
+			The action takes no quantity (ByD ships the item's full open quantity) and
+			makes one delivery per item, so the receipt sync now uses
+			create_outbound_delivery_from_request; this stays for manual use.
 			THIS MOVES STOCK. Callers gate it behind settings.BYD_AUTO_POST_GOODS_ISSUE.
 		"""
 		flag = "true" if auto_release else "false"
@@ -737,6 +739,52 @@ class RESTServices:
 			logger.info(f"Goods issue posted for delivery request item {item_object_id}")
 			return response.json() if response.text else {}
 		logger.error(f"Failed to post goods issue for request item {item_object_id}: {response.text}")
+		raise Exception(f"Error from SAP: {response.text}")
+
+	def create_outbound_delivery_from_request(self, request: dict, items: list) -> dict:
+		"""
+			Create ONE outbound delivery (status "Not Released") covering several
+			delivery-request items, each at its own quantity:
+			POST khoutbounddelivery/OutboundDeliveryCollection.
+
+			ItemPostGoodsIssue can't do this: it takes no quantity and makes a
+			delivery per item. `items` is [{"so_item_id", "product_id", "quantity",
+			"unit_code"}]; each is tied back to its request item through
+			ItemDeliveryRequestReference (TypeCode 68, the delivery request).
+			The delivery has to be released afterwards (release_outbound_delivery).
+
+			NOTE: the payload field names follow the khoutbounddelivery read model
+			and have not yet been exercised against the tenant. ByD rejects an
+			unknown field before anything is created, so a wrong name fails loudly.
+			THIS CREATES A DELIVERY. Callers gate it behind settings.BYD_AUTO_POST_GOODS_ISSUE.
+		"""
+		request_id = request.get("ID") or request.get("BaseBusinessTransactionDocumentID")
+		payload = {
+			"Item": [
+				{
+					"ID": str(index + 1),
+					"ProductID": item["product_id"],
+					"ItemDeliveryQuantity": {
+						"Quantity": str(item["quantity"]),
+						"UnitCode": item["unit_code"],
+					},
+					"ItemDeliveryRequestReference": {
+						"ID": str(request_id),
+						"ItemID": str(item["so_item_id"]),
+						"TypeCode": "68",
+					},
+				} for index, item in enumerate(items)
+			],
+		}
+		action_url = f"{self.endpoint}/sap/byd/odata/cust/v1/khoutbounddelivery/OutboundDeliveryCollection"
+		self.refresh_csrf_token()
+		response = self.__post__(action_url, json=payload)
+		if response.status_code == 201:
+			created = response.json()["d"]["results"]
+			created = created[0] if isinstance(created, list) else created
+			logger.info(f"Outbound delivery {created.get('ID')} created for delivery request {request_id}")
+			return created
+		logger.error(f"Failed to create outbound delivery for delivery request {request_id}: {response.text}")
 		raise Exception(f"Error from SAP: {response.text}")
 
 	def release_outbound_delivery(self, delivery_object_id: str) -> dict:
