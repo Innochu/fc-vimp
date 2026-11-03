@@ -861,11 +861,16 @@ def create_outbound_delivery_for_receipt(receipt):
 	eGRN 2 step 3: on SCD approval of a sales-order receipt, create and post the
 	Outbound Delivery in ByD, then back-fill the delivery on the InboundDelivery.
 
-	ByD mechanism (verified Sept 2026, see RESTServices docstrings):
-	  sales order --release--> delivery request --ItemPostGoodsIssue--> outbound
-	  delivery (created + goods issue posted). The request has no sales-order
-	  key, so it is located by item fingerprint; the delivery is then read back
-	  from the sales order's DocumentReference (TypeCode 73).
+	ByD document chain (verified Sept/Oct 2026, see RESTServices docstrings):
+	  sales order --release--> customer demand --release (Supply Planning)-->
+	  delivery request --ItemPostGoodsIssue--> warehouse request/order, outbound
+	  delivery (created + goods issue posted). Releasing the sales order does not
+	  by itself create the delivery request: the customer demand is released in
+	  ByD separately, and khsalesorder's ReleaseAllItemsToExecution /
+	  ItemReleaseToExecute are no-ops for delivery-based (TAN) items. Until that
+	  happens there is nothing to post a goods issue against, so the receipt is
+	  held. The request is found via QueryByElements?SalesOrderID; the delivery
+	  is then read back from the sales order's DocumentReference (TypeCode 73).
 
 	Idempotent: if the sales order already has a delivery, nothing is posted and
 	the delivery is just back-filled. Every write is gated by
@@ -915,9 +920,19 @@ def create_outbound_delivery_for_receipt(receipt):
 	if not sales_order:
 		raise SAPIntegrationError(f"Sales order {so_id} not found in ByD")
 
+	# Receipts recorded before the search screen refused unreleased orders can still get here.
+	if str(sales_order.get("ReleaseStatusCode")) != "3":
+		release_status = sales_order.get("ReleaseStatusCodeText") or "not released"
+		raise GoodsIssueHeld(f"SO {so_id} is {release_status} in ByD; release it before the receipt can be posted")
+
 	try:
 		request = rest_client.find_delivery_request_for_sales_order(sales_order)
-	except (rest_client.DeliveryRequestNotFound, rest_client.DeliveryRequestAmbiguous) as e:
+	except rest_client.DeliveryRequestNotFound as e:
+		raise GoodsIssueHeld(
+			f"{e}. Release the customer demand for SO {so_id} in ByD (Supply Planning) so its "
+			f"outbound delivery request is created, then retry the ByD sync"
+		)
+	except rest_client.DeliveryRequestAmbiguous as e:
 		raise GoodsIssueHeld(str(e))
 
 	request_items = request.get("Item") or []
@@ -938,7 +953,10 @@ def create_outbound_delivery_for_receipt(receipt):
 				f"SO {so_id} item {so_item_id} ({line.inbound_delivery_line_item.product_id}) has no delivery request item"
 			)
 		open_quantity = 0.0
-		for sched in (request_item.get("ItemScheduleLine") or []):
+		schedule_lines = request_item.get("ItemScheduleLine") or []
+		if isinstance(schedule_lines, dict):
+			schedule_lines = schedule_lines.get("results") or []
+		for sched in schedule_lines:
 			open_node = sched.get("OpenQuantity") or {}
 			if isinstance(open_node, dict) and open_node.get("Quantity") is not None:
 				open_quantity = float(open_node["Quantity"])
@@ -1083,7 +1101,9 @@ def sync_approved_receipt_to_sap(receipt_id: int):
 	  1. create_outbound_delivery_for_receipt(): locate the delivery request,
 	     post goods issue per received item, back-fill object_id / delivery_id
 	     (gated by settings.BYD_AUTO_POST_GOODS_ISSUE; raises GoodsIssueHeld
-	     when it must not proceed - the receipt then stays unsynced for review)
+	     when it must not proceed, e.g. the customer demand is not yet released
+	     in ByD - the receipt then stays unsynced, with the reason in
+	     metadata['byd_goods_issue_held'], until re-queued from the admin)
 	  2. post_goods_receipt_on_byd() as before, so the receiving site books the
 	     goods receipt against the stock now in transit.
 	Updates synced_to_sap on success.
@@ -1132,6 +1152,7 @@ def sync_approved_receipt_to_sap(receipt_id: int):
 		# If we get here, the posting succeeded
 		receipt.refresh_from_db()
 		receipt.synced_to_sap = True
+		receipt.metadata.pop('byd_goods_issue_held', None)
 		receipt.metadata['sap_sync'] = {
 			'synced_at': timezone.now().isoformat(),
 			'approved_by': receipt.approved_by.username if receipt.approved_by else None

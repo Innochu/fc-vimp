@@ -288,6 +288,12 @@ def get_inbound_delivery(request, pk):
 					message=f"Sales order {pk} not found in SAP ByD"
 				)
 
+			# An unreleased order has no customer demand behind it, so ByD could never
+			# deliver it - refuse before anything is cached or received against it.
+			if str(sales_order_data.get("ReleaseStatusCode")) != "3":
+				release_status = sales_order_data.get("ReleaseStatusCodeText") or "not released"
+				raise ValidationError(f"it is {release_status} in SAP ByD")
+
 			# Attach product details and pricing to each item for the receiving screen
 			sales_order_data = byd_rest._enrich_delivery_items(sales_order_data)
 

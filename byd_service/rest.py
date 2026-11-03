@@ -595,8 +595,10 @@ class RESTServices:
 		"""
 			khoutbounddeliveryrequest/QueryByElements?SalesOrderID='...' - the service's
 			function import exposes the sales-order key that the entity itself lacks.
-			Verified Sept 2026: SO 132 -> request 53; an order never released for
-			logistics returns []. Returns the matching requests with items expanded;
+			Verified Sept 2026: SO 132 -> request 53. [] means the order's customer
+			demand has not been released to logistics yet - a released sales order
+			does not guarantee a request (Oct 2026: released SOs 105131/105137/
+			105142/105143 had none). Returns the matching requests with items expanded;
 			if $expand is not accepted on the function import, each request is
 			re-read through key access to get its items.
 		"""
@@ -641,7 +643,8 @@ class RESTServices:
 			scan requests created around the order's release and match on content -
 			the request's items repeat the sales order item number
 			(BaseBusinessTransactionDocumentItemID), ProductID and requested quantity.
-			Requests are created when the order is *released*, so the window spans
+			Requests are created when the order's customer demand is released, which
+			can trail the order itself, so the window spans
 			CreationDateTime..LastChangeDateTime plus a margin; several orders are
 			routinely released within minutes, hence content matching.
 
