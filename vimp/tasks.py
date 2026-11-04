@@ -863,23 +863,24 @@ def create_outbound_delivery_for_receipt(receipt):
 
 	ByD document chain (verified Sept/Oct 2026, see RESTServices docstrings):
 	  sales order --release--> customer demand --release (Supply Planning)-->
-	  delivery request --ItemPostGoodsIssue--> warehouse request/order, outbound
-	  delivery (created + goods issue posted). Releasing the sales order does not
-	  by itself create the delivery request: the customer demand is released in
-	  ByD separately, and khsalesorder's ReleaseAllItemsToExecution /
+	  delivery request --> ONE outbound delivery holding every received line at
+	  its approved received quantity, then released. Releasing the sales order
+	  does not by itself create the delivery request: the customer demand is
+	  released in ByD separately, and khsalesorder's ReleaseAllItemsToExecution /
 	  ItemReleaseToExecute are no-ops for delivery-based (TAN) items. Until that
-	  happens there is nothing to post a goods issue against, so the receipt is
-	  held. The request is found via QueryByElements?SalesOrderID; the delivery
-	  is then read back from the sales order's DocumentReference (TypeCode 73).
+	  happens there is nothing to deliver against, so the receipt is held. The
+	  request is found via QueryByElements?SalesOrderID; the delivery is then read
+	  back from the sales order's DocumentReference (TypeCode 73).
 
-	Idempotent: if the sales order already has a delivery, nothing is posted and
-	the delivery is just back-filled. Every write is gated by
+	Idempotent: if the sales order already has a delivery, nothing new is created
+	and the delivery is just back-filled (released first if a previous run
+	created it but died before releasing). Every write is gated by
 	settings.BYD_AUTO_POST_GOODS_ISSUE (default off) because it moves stock.
 
-	Quantity: ItemPostGoodsIssue ships the item's full open quantity. When the
-	received quantity is lower, settings.BYD_SHORT_RECEIPT_POLICY decides:
-	  'hold'      (default) raise GoodsIssueHeld and leave the receipt for review
-	  'post_full' post the open quantity and record the shortfall in metadata
+	Quantity: the delivery carries what the store received, not the open
+	quantity. A shortfall is recorded in receipt metadata; the unreceived
+	remainder stays open on the sales order. Receiving more than the open
+	quantity raises GoodsIssueHeld.
 	"""
 	from django.conf import settings
 
@@ -902,6 +903,20 @@ def create_outbound_delivery_for_receipt(receipt):
 		}
 		receipt.save(update_fields=['metadata'])
 		logger.info(f"TR-{receipt.receipt_number}: linked outbound delivery {inbound_delivery.delivery_id} for SO {so_id}")
+
+	def _release_pending(object_id):
+		rest_client.release_outbound_delivery(object_id)
+		receipt.metadata.pop('byd_delivery_pending_release', None)
+		receipt.save(update_fields=['metadata'])
+
+	# A previous run created the delivery but failed before releasing it. Resume
+	# from the saved ObjectID: the sales order may not list the delivery yet, and
+	# creating another would double-issue the stock.
+	pending = receipt.metadata.get('byd_delivery_pending_release')
+	if pending:
+		_release_pending(pending)
+		_backfill({"ObjectID": pending})
+		return
 
 	# Already delivered in ByD (previous run, or someone posted it in the UI)?
 	existing = rest_client.get_sales_order_outbound_deliveries(so_id)
@@ -940,18 +955,16 @@ def create_outbound_delivery_for_receipt(receipt):
 		request_items = request_items.get("results") or []
 	by_so_item = {str(i.get("BaseBusinessTransactionDocumentItemID")): i for i in request_items}
 
-	policy = getattr(settings, 'BYD_SHORT_RECEIPT_POLICY', 'hold')
 	plan, shortfalls = [], []
 	for line in receipt.line_items.select_related('inbound_delivery_line_item'):
 		received = float(line.quantity_received)
 		if received <= 0:
 			continue
 		so_item_id = str((line.inbound_delivery_line_item.metadata or {}).get("ID", ""))
+		product_id = line.inbound_delivery_line_item.product_id
 		request_item = by_so_item.get(so_item_id)
 		if not request_item:
-			raise GoodsIssueHeld(
-				f"SO {so_id} item {so_item_id} ({line.inbound_delivery_line_item.product_id}) has no delivery request item"
-			)
+			raise GoodsIssueHeld(f"SO {so_id} item {so_item_id} ({product_id}) has no delivery request item")
 		open_quantity = 0.0
 		schedule_lines = request_item.get("ItemScheduleLine") or []
 		if isinstance(schedule_lines, dict):
@@ -964,42 +977,40 @@ def create_outbound_delivery_for_receipt(receipt):
 		if open_quantity <= 0:
 			logger.info(f"SO {so_id} item {so_item_id} already delivered in ByD (open qty 0); skipping")
 			continue
+		if received > open_quantity:
+			raise GoodsIssueHeld(
+				f"Received {received} of SO {so_id} item {so_item_id} ({product_id}) exceeds the open quantity {open_quantity}"
+			)
 		if received < open_quantity:
 			shortfalls.append({
 				"so_item": so_item_id,
-				"product_id": line.inbound_delivery_line_item.product_id,
+				"product_id": product_id,
 				"open_quantity": open_quantity,
 				"received": received,
 			})
-		plan.append(request_item["ObjectID"])
-
-	if shortfalls:
-		receipt.metadata['byd_short_receipt'] = shortfalls
-		receipt.save(update_fields=['metadata'])
-		if policy != 'post_full':
-			raise GoodsIssueHeld(
-				f"Received less than ordered on {len(shortfalls)} item(s) of SO {so_id}; "
-				f"ItemPostGoodsIssue would ship the full open quantity (BYD_SHORT_RECEIPT_POLICY={policy})"
-			)
+		plan.append({
+			"so_item_id": so_item_id,
+			"product_id": product_id,
+			"quantity": received,
+			"unit_code": _line_item_unit_code(line.inbound_delivery_line_item.metadata),
+		})
 
 	if not plan:
 		raise GoodsIssueHeld(f"Nothing to post for SO {so_id}: no received line maps to an open request item")
 
-	posted = []
-	for item_object_id in plan:
-		rest_client.post_goods_issue_for_request_item(item_object_id, auto_release=True)
-		posted.append(item_object_id)
-		receipt.metadata['byd_goods_issue_items'] = posted
-		receipt.save(update_fields=['metadata'])
+	if shortfalls:
+		receipt.metadata['byd_short_receipt'] = shortfalls
+		logger.info(f"SO {so_id}: delivering the received quantity on {len(shortfalls)} short item(s)")
 
-	# ByD needs a moment before the new delivery shows on the sales order.
-	for attempt in range(6):
-		time.sleep(5)
-		created = rest_client.get_sales_order_outbound_deliveries(so_id)
-		if created:
-			_backfill(created[-1])
-			return
-	raise RetryableError(f"Goods issue posted for SO {so_id} but no outbound delivery is visible yet")
+	# One delivery for every line, at the received quantities. Record its ObjectID
+	# before releasing so a failed release is resumed, never duplicated.
+	delivery = rest_client.create_outbound_delivery_from_request(request, plan)
+	receipt.metadata['byd_goods_issue_items'] = [p["so_item_id"] for p in plan]
+	receipt.metadata['byd_delivery_pending_release'] = delivery["ObjectID"]
+	receipt.save(update_fields=['metadata'])
+
+	_release_pending(delivery["ObjectID"])
+	_backfill({"ObjectID": delivery["ObjectID"], "ID": delivery.get("ID")})
 
 
 def post_goods_receipt_on_byd(receipt):
