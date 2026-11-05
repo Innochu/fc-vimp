@@ -33,6 +33,7 @@ from .models import (
 	PurchaseOrderLineItem, ProductConfiguration, Store,
 	StockConsumptionRecord
 )
+from .access import get_user_stores
 from .serializers import GoodsReceivedNoteSerializer, GoodsReceivedLineItemSerializer, PurchaseOrderSerializer
 
 
@@ -130,7 +131,7 @@ def search_vendor(request, ):
 @authentication_classes([CombinedAuthentication])
 def get_purchase_order(request, po_id):
 	try:
-		user_stores = Store.objects.filter(store_email=request.user.email)
+		user_stores = get_user_stores(request.user)
 		try:
 			# Fetch purchase orders from the database
 			orders = PurchaseOrder.objects.get(po_id=po_id)
@@ -185,7 +186,7 @@ def create_grn(request, ):
 	try:
 		# Filter for only the PO Line items that the user has permission to receive
 		permitted_to_receive_items = (PurchaseOrderLineItem.objects.filter(object_id__in=map(lambda x: x['itemObjectID'], request_data["recievedGoods"]))
-							.filter(delivery_store__store_email=request.user.email))
+							.filter(delivery_store__in=get_user_stores(request.user)))
 		# If there are no items that the user has permission to receive, return an error
 		if not permitted_to_receive_items:
 			return APIResponse("User does not have permission to receive these items.", status.HTTP_403_FORBIDDEN)
@@ -212,7 +213,7 @@ def get_all_grns(request, ):
 		)
 		user_stores = get_or_set_cache(
 			user_stores_key,
-			lambda: list(Store.objects.filter(store_email=request.user.email)),
+			lambda: list(get_user_stores(request.user)),
 			CacheManager.TIMEOUT_LONG
 		)
 		

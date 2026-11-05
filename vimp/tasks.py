@@ -50,12 +50,14 @@ def post_to_icg(instance, ):
 			return lambda x: ''
 		return lambda x: str(chr(x + 65))
 	# Get the function to get the reference modification for the current store.
-	ref_mod = get_ref_mod(len(instance.stores))
+	# Stores flagged "post to ICG: no" are not tracked in ICG and are skipped.
+	stores = [s for s in instance.stores if s.post_to_icg]
+	ref_mod = get_ref_mod(len(stores))
 	# Dictionary to hold the posting status of each store.
 	posted_status = {}
-	
+
 	# Iterate over the stores involved in the GRN.
-	for index, store in enumerate(instance.stores):
+	for index, store in enumerate(stores):
 		# Get only the line items that belong to this store.
 		items_for_store = instance.line_items.filter(purchase_order_line_item__delivery_store=store)
 		# Modify the GRN number by appending an alphabet, if necessary.

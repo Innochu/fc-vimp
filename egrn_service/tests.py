@@ -189,3 +189,46 @@ class DownloadGRNsViewTests(TestCase):
 			relative_path = parsed.path[len(media_prefix):]
 			file_path = os.path.join(tmp_dir, relative_path.replace('/', os.sep))
 			self.assertTrue(os.path.exists(file_path))
+
+
+class SCDStoreAccessTests(TestCase):
+	def setUp(self):
+		from transfer_service.models import StoreAuthorization
+		self.StoreAuthorization = StoreAuthorization
+		self.user = CustomUser.objects.create_user(
+			username="scd_user", email="scd.user@example.com", password="TestPass123"
+		)
+		self.retail = Store.objects.create(
+			store_name="Retail A", store_email="retail@example.com",
+			icg_warehouse_code="R-1", byd_cost_center_code="R-1", metadata={}
+		)
+		self.scd = Store.objects.create(
+			store_name="SCD Lagos", store_email="scd@example.com",
+			icg_warehouse_code="S-1", byd_cost_center_code="S-1",
+			location_type=Store.LOCATION_TYPE_SCD, metadata={}
+		)
+
+	def test_email_match_still_grants_retail_store(self):
+		self.retail.store_email = self.user.email
+		self.retail.save()
+		from .access import get_user_stores
+		self.assertEqual(list(get_user_stores(self.user)), [self.retail])
+
+	def test_store_authorization_grants_scd_only(self):
+		from .access import get_user_stores
+		self.StoreAuthorization.objects.create(user=self.user, store=self.scd, role='clerk')
+		self.StoreAuthorization.objects.create(user=self.user, store=self.retail, role='clerk')
+		self.assertEqual(list(get_user_stores(self.user)), [self.scd])
+
+	def test_viewer_role_grants_nothing(self):
+		from .access import get_user_stores
+		self.StoreAuthorization.objects.create(user=self.user, store=self.scd, role='viewer')
+		self.assertEqual(list(get_user_stores(self.user)), [])
+
+	def test_source_location_approver_grants_scd_store(self):
+		from transfer_service.models import SourceLocationAuthorization
+		from .access import get_user_stores
+		SourceLocationAuthorization.objects.create(
+			user=self.user, source_location_id="S-1", source_location_name="SCD Lagos"
+		)
+		self.assertEqual(list(get_user_stores(self.user)), [self.scd])

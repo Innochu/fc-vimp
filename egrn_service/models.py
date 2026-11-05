@@ -56,8 +56,24 @@ class Store(models.Model):
 	'''
 		Stores information about a store.
 	'''
+	LOCATION_TYPE_RETAIL = 'retail'
+	LOCATION_TYPE_SCD = 'scd'
+	LOCATION_TYPE_CHOICES = [
+		(LOCATION_TYPE_RETAIL, 'Retail Store'),
+		(LOCATION_TYPE_SCD, 'SCD Location'),
+	]
+
 	store_name = models.CharField(max_length=255)
 	store_email = models.EmailField(blank=True, null=True)
+	location_type = models.CharField(
+		max_length=10, choices=LOCATION_TYPE_CHOICES, default=LOCATION_TYPE_RETAIL,
+		help_text="SCD locations receive vendor-direct supplies from the SCD portal."
+	)
+	post_to_icg = models.BooleanField(
+		default=True,
+		help_text="Set to No only if this location isn't tracked in ICG. "
+				  "Goods received here will then not be posted to ICG."
+	)
 	icg_warehouse_name = models.CharField(max_length=255, null=True, blank=True)
 	icg_warehouse_code = models.CharField(max_length=20, unique=True)
 	byd_cost_center_code = models.CharField(max_length=20, unique=True)
@@ -81,6 +97,9 @@ class Store(models.Model):
 		self.icg_warehouse_name = store_data.get('icg_warehouse_name', '')
 		self.icg_warehouse_code = store_data.get('icg_warehouse_code', '')
 		self.byd_cost_center_code = store_data.get('byd_cost_center_code', '')
+		location_type = store_data.get('location_type')
+		if location_type in dict(self.LOCATION_TYPE_CHOICES):
+			self.location_type = location_type
 		self.metadata = store_data
 		# Save
 		self.save()
@@ -349,9 +368,11 @@ class GoodsReceivedNote(models.Model):
 			self.delete()
 			raise e
 		# Perform asynchronous tasks after the GRN and it's corresponding line items have been created
-		async_task('vimp.tasks.post_to_icg', self, q_options={
-			'task_name': f'Post-GRN-{self.grn_number}-To-ICG-Inventory',
-		})
+		# Only post if at least one store involved is tracked in ICG.
+		if any(store.post_to_icg for store in self.stores):
+			async_task('vimp.tasks.post_to_icg', self, q_options={
+				'task_name': f'Post-GRN-{self.grn_number}-To-ICG-Inventory',
+			})
 		# async_task('vimp.tasks.post_to_gl', {
 		# 	'grn': self,
 		# 	'action': 'receipt', # This must be one of either 'receipt' or 'invoice_approval'.

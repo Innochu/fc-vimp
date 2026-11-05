@@ -131,6 +131,25 @@ def invalidate_store_cache(sender, instance, **kwargs):
         logger.error(f"Error invalidating Store cache: {e}")
 
 
+def _invalidate_user_stores_on_authorization_change(sender, instance, **kwargs):
+    """
+    A store/source-location authorization decides which stores a user can see,
+    so drop their cached store list the moment it is granted, changed or removed.
+    """
+    try:
+        invalidate_user_cache(instance.user_id, "stores")
+    except Exception as e:
+        logger.error(f"Error invalidating stores cache for user {instance.user_id}: {e}")
+
+
+from transfer_service.models import StoreAuthorization, SourceLocationAuthorization
+for _model in (StoreAuthorization, SourceLocationAuthorization):
+    post_save.connect(_invalidate_user_stores_on_authorization_change, sender=_model,
+                      dispatch_uid=f"invalidate_stores_{_model.__name__}")
+    post_delete.connect(_invalidate_user_stores_on_authorization_change, sender=_model,
+                        dispatch_uid=f"invalidate_stores_del_{_model.__name__}")
+
+
 @receiver([post_save, post_delete], sender=PurchaseOrder)
 def invalidate_purchase_order_cache(sender, instance, **kwargs):
     """
@@ -179,7 +198,8 @@ def warm_user_cache(user):
         user_stores_key = CacheManager.get_user_cache_key(
             user, "stores", user.email
         )
-        stores = list(Store.objects.filter(store_email=user.email))
+        from egrn_service.access import get_user_stores
+        stores = list(get_user_stores(user))
         cache.set(user_stores_key, stores, CacheManager.TIMEOUT_LONG)
         
         logger.info(f"Warmed cache for user {user.id}")

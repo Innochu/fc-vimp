@@ -35,6 +35,7 @@ class SurchargeAdmin(ModelAdmin):
 	
 class StoreAdmin(ModelAdmin):
 	#store_name, store_email, icg_warehouse_name, icg_warehouse_code, byd_cost_center_code, metadata
+	list_filter = ['location_type', 'post_to_icg']
 	search_fields = [
 		'store_name',
 		'store_email',
