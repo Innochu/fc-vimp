@@ -77,6 +77,7 @@ INSTALLED_APPS = [
 	'transfer_service',
 	'reports_service',
 	'imprest_service',
+	'gsr_service',
 ]
 
 JSON_EDITOR_JS = 'https://cdnjs.cloudflare.com/ajax/libs/jsoneditor/8.6.4/jsoneditor.js'
@@ -113,6 +114,14 @@ UNFOLD = {
 # eGRN 2 step 3 - creating outbound deliveries in ByD on SCD approval.
 # ItemPostGoodsIssue moves real stock, so it is off unless explicitly enabled.
 BYD_AUTO_POST_GOODS_ISSUE = os.getenv('BYD_AUTO_POST_GOODS_ISSUE', 'false').lower() == 'true'
+
+# Goods & Services Receipt (maintenance services).
+# Comma-separated ByD product IDs treated as maintenance services; empty = no restriction.
+GSR_SERVICE_PRODUCT_IDS = [p.strip() for p in os.getenv('GSR_SERVICE_PRODUCT_IDS', '').split(',') if p.strip()]
+# Send confirmations to ByD. Off until the ByD service-confirmation object is agreed.
+GSR_BYD_POSTING_ENABLED = os.getenv('GSR_BYD_POSTING_ENABLED', 'false').lower() == 'true'
+# Require the gsr_service.confirm_service permission to confirm a service.
+GSR_REQUIRE_CONFIRM_PERMISSION = os.getenv('GSR_REQUIRE_CONFIRM_PERMISSION', 'false').lower() == 'true'
 
 Q_CLUSTER = {
 	'name': 'vimp_workers',

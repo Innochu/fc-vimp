@@ -28,6 +28,7 @@ urlpatterns = [
     path('health/performance/database/', performance_views.database_statistics, name='database_statistics'),
     path('health/', performance_views.health_check, name='health_check'),
     path('transfers/v1/', include('transfer_service.urls')),
+    path('gsr/v1/', include('gsr_service.urls')),
 ]
 
 urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
