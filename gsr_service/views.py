@@ -9,11 +9,11 @@ from rest_framework import status
 from rest_framework.decorators import api_view, authentication_classes
 
 from byd_service.rest import RESTServices
-from egrn_service.access import get_user_stores
 from egrn_service.models import PurchaseOrder, PurchaseOrderLineItem
 from overrides.authenticate import CombinedAuthentication
 from overrides.rest_framework import APIResponse, CustomPagination
 
+from .access import get_user_stores
 from .models import GoodsServiceReceipt, GSRLineItem, GSRAttachment
 from .serializers import GoodsServiceReceiptSerializer
 
