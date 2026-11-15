@@ -1,0 +1,43 @@
+# Test environment for GitHub Codespaces / VS Code dev containers.
+# Throwaway credentials: for testing only, never use in production.
+services:
+  app:
+    image: mcr.microsoft.com/devcontainers/python:3.11
+    volumes:
+      - ../..:/workspaces:cached
+    command: sleep infinity
+    environment:
+      DEBUG: "True"
+      DJANGO_SECRET: test-secret-not-for-prod
+      ALLOWED_HOSTS: "*"
+      DB_ENGINE: django.db.backends.mysql
+      DB_NAME: vimp_test
+      DB_USER: vimp
+      DB_PASSWORD: vimppass
+      DB_HOST: db
+      DB_PORT: "3306"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  db:
+    image: mysql:8.0
+    restart: unless-stopped
+    environment:
+      MYSQL_DATABASE: vimp_test
+      MYSQL_USER: vimp
+      MYSQL_PASSWORD: vimppass
+      MYSQL_ROOT_PASSWORD: rootpass
+    # Lets Django create/drop its own test_ database
+    command: --default-authentication-plugin=mysql_native_password
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-prootpass"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    volumes:
+      - mysql_test_data:/var/lib/mysql
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+
+volumes:
+  mysql_test_data:
