@@ -10,6 +10,8 @@ services:
       DEBUG: "1"
       DJANGO_SECRET: test-secret-not-for-prod
       ALLOWED_HOSTS: "*"
+      # Settings split this on commas; an empty value fails Django's system check
+      CSRF_TRUSTED_ORIGINS: http://localhost:8000
       DB_ENGINE: django.db.backends.mysql
       DB_NAME: vimp_test
       DB_USER: vimp
