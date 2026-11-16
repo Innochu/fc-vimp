@@ -227,13 +227,18 @@ def health_check(request):
             pass
         
         # Test cache connection
-        try:
-            cache.set('health_check', 'ok', 10)
-            if cache.get('health_check') == 'ok':
-                checks['cache'] = True
-                cache.delete('health_check')
-        except:
-            pass
+        if settings.CACHES.get('default', {}).get('BACKEND', '').endswith('DummyCache'):
+            # Caching is intentionally disabled (it stores nothing), so there is
+            # nothing to check. Without this the endpoint would return 503 forever.
+            checks['cache'] = True
+        else:
+            try:
+                cache.set('health_check', 'ok', 10)
+                if cache.get('health_check') == 'ok':
+                    checks['cache'] = True
+                    cache.delete('health_check')
+            except:
+                pass
         
         # Check disk space (warn if less than 10% free)
         try:
