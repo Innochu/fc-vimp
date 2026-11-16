@@ -1,6 +1,7 @@
 from decimal import Decimal
 
 from django.core.exceptions import ValidationError
+from django.db import models
 from django.test import TestCase
 from django.utils import timezone
 
@@ -24,12 +25,16 @@ class GoodsServiceReceiptTests(TestCase):
 			vendor=vendor, object_id="PO-GSR", po_id=900, total_net_amount=Decimal('1000'),
 			date=timezone.now(), metadata={}
 		)
-		self.line = PurchaseOrderLineItem.objects.create(
+		# PurchaseOrderLineItem.save() looks up tax/store details from ByD data and takes
+		# no arguments, so objects.create() (which passes force_insert) fails. Save through
+		# the base model, as the egrn_service tests do.
+		self.line = PurchaseOrderLineItem(
 			purchase_order=self.po, delivery_store=self.store, object_id="POLI-GSR",
 			product_id="SVC-1", product_name="Generator servicing", quantity=Decimal('4'),
 			unit_price=Decimal('250'), unit_of_measurement="EA",
 			metadata={'ProductID': 'SVC-1'}
 		)
+		models.Model.save(self.line)
 
 	def _create(self, quantity):
 		return GoodsServiceReceipt.create_receipt(
