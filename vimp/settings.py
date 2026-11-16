@@ -320,8 +320,14 @@ DATABASES = {
 	},
 }
 
-# Redis Cache Configuration
-# CACHES = {}
+# Caching is disabled: gunicorn runs several workers and the default in-memory
+# cache is private to each one, which showed stale data. DummyCache stores
+# nothing, so every request reads the database directly.
+CACHES = {
+	'default': {
+		'BACKEND': 'django.core.cache.backends.dummy.DummyCache',
+	}
+}
 
 # Session and Cache Configuration
 # SESSION_ENGINE = 'django.contrib.sessions.backends.cache'
