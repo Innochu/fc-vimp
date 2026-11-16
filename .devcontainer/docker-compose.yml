@@ -7,7 +7,7 @@ services:
       - ../..:/workspaces:cached
     command: sleep infinity
     environment:
-      DEBUG: "True"
+      DEBUG: "1"
       DJANGO_SECRET: test-secret-not-for-prod
       ALLOWED_HOSTS: "*"
       DB_ENGINE: django.db.backends.mysql
@@ -16,6 +16,14 @@ services:
       DB_PASSWORD: vimppass
       DB_HOST: db
       DB_PORT: "3306"
+      # Local fake SAP (see fake_sap.py). Never point tests at a real SAP system.
+      SAP_URL: http://127.0.0.1:9999
+      SAP_USER: test
+      SAP_PASS: test
+      MIDDLEWARE_HOST: http://127.0.0.1:9999
+      MIDDLEWARE_USER: test
+      MIDDLEWARE_PASS: test
+      HQ_STORE_COST_CENTER_CODE: TEST01
     depends_on:
       db:
         condition: service_healthy
