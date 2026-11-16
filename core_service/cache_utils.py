@@ -120,11 +120,6 @@ class CacheManager:
         Returns:
             int: Number of keys invalidated
         """
-        # Caching is disabled (DummyCache stores nothing), so there is nothing to
-        # invalidate. Returning early avoids a warning on every save.
-        if settings.CACHES.get('default', {}).get('BACKEND', '').endswith('DummyCache'):
-            return 0
-
         try:
             # Import django_redis helper to get raw Redis client
             from django_redis import get_redis_connection
